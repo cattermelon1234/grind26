@@ -1,6 +1,7 @@
 #include <iostream>
 using namespace std;
 
+// find div
 int find_divisors(int n) {
   int count = 0;
   for (int i = 1; 1LL * i * i <= n; i++) {

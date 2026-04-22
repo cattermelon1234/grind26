@@ -15,6 +15,7 @@ int find_divisors(int n) {
   return count;
 }
 
+// mix
 void print_mixed(int x, int y) {
   for (int i = 0; i < x; i++) {
     cout << 1 << ' ';

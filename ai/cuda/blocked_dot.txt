@@ -4,25 +4,36 @@ the partial products to get the final dot product.
 
 The simple plan is: use shared memory to store the partial products, and then use a reduction to sum them up.
 
-1. Each thread (with index tid) computes the product of A[tid] and B[tid], and stores it in shared memory.
-However, say the size of our vector is way larger than the number of threads we've launched. The solution
-to this is to have each thread compute multiple products. Now, thread tid will compute the product of 
-A[tid], B[tid], A[tid + blockDim.x], B[tid + blockDim.x], and so on, until we exceed the size of the vector. 
-Essentially, each tid is responsible for any vector index with the same modulo as tid.
+1. Each thread computes a portion of the dot product and accumulates the result into a local variable. If the vector is larger than the total number of threads launched, a single thread may be responsible for multiple vector elements. To accomplish this, we use a **grid-stride loop**.
 
-[0, 1, 2, 3 | 4, 5, 6, 7 | 8, 9, 10, 11 | 12, 13, 14, 15 ]
-num blocks = 4
-num threads per block = 4
-Thread 0: indices 0, 4, 8, 12
-Thread 1: indices 1, 5, 9, 13
-Thread 2: indices 2, 6, 10, 14
-Thread 3: indices 3, 7, 11, 15
+First, each thread computes its global index:
 
-Pretty much, each thread is responsible for the tid'th index of each block. 
+```cpp
+int tid = blockIdx.x * blockDim.x + threadIdx.x;
+```
+
+The total number of threads in the grid is:
+
+```cpp
+int stride = blockDim.x * gridDim.x;
+```
+
+Thread `tid` processes indices:
+
+```text
+tid
+tid + stride
+tid + 2 * stride
+...
+```
+
+until it exceeds the vector length.
+
+This is sometimes necessary in production patterns where we do not want the number of threads to scale with vector size.
 
 2. Shared Memory 
 In order for reduction to happen, each thread needs to be aware of the products computed 
-by other threads. We can use shared memory for this. Each thread will write its partial 
+by other threads in the same block. We can use shared memory for this. Each thread will write its partial 
 product to a shared memory array, declared with the __shared__ keyword. This allows all 
 threads in the block to access the partial products.
 
@@ -41,6 +52,9 @@ memory array until only one thread remains, which will hold the final dot produc
 At first glance, it seems like the below approach is intuitive:
 We combine neighboring threads to sum their products, and keep halving like discussed. This leads 
 to a log number of steps. 
+In this case, a 'stride' is used to determine which threads are active together. Initially, the 
+stride is 1, meaning each thread sums with its neighbor. Then the stride doubles to 2, meaning 
+each thread sums with the thread that is 2 away, and so on.
 
           56
        20    36
@@ -69,9 +83,7 @@ It may be difficult to see, but the difference is just each thread is summing wi
 thread, instead of a neighboring thread. This way, we can ensure that all threads in a warp are
 active together, leading to better performance.
 
-In this case, a 'stride' is used to determine which threads are active together. Initially, the 
-stride is 1, meaning each thread sums with its neighbor. Then the stride doubles to 2, meaning 
-each thread sums with the thread that is 2 away, and so on.
+In this reduction pattern, a stride determines how far away the value being added is in shared memory. Initially, the stride is half the block size, so thread 0 adds the value from thread stride, thread 1 adds the value from thread stride + 1, and so on. After each iteration, the stride is halved, reducing the number of active threads by half while keeping the active threads contiguous. This continues until only thread 0 remains, which contains the sum for the entire block.
 
 4. Final Result, modifying Global Memory
 Once this reduction is achieved, we will have the final dot product for that block. If we have multiple blocks,
